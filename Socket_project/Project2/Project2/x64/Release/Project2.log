@@ -1,0 +1,7 @@
+﻿  Client.cpp
+E:\vscode\Net_Course_hwk\Socket_project\Project2\Project2\Client.cpp(120,64): warning C4267: “参数”: 从“size_t”转换到“int”，可能丢失数据
+  正在生成代码
+  Previous IPDB was built with incompatible compiler, fall back to full compilation.
+  All 109 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  Project2.vcxproj -> E:\vscode\Net_Course_hwk\Socket_project\Project2\x64\Release\Project2.exe
