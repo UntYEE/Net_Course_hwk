@@ -6,12 +6,15 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <random>
+#define RESET   "\033[0m"
+#define GREEN   "\033[1;32m"
+#define BLUE    "\033[1;34m"
 #define SERVER_IP "127.0.0.1"  // 服务器的IP地址
 #define SERVER_PORT 3999
-#define BUFFER_SIZE sizeof(Packet)  // 缓冲区大小
-#define WINDOW_SIZE 20
 #define PACKET_LENGTH 1024
-#define MAX_TIME 2 * CLOCKS_PER_SEC  // 超时重传
+#define BUFFER_SIZE sizeof(Packet)  // 缓冲区大小
+#define TIME_OUT 0.2 * CLOCKS_PER_SEC  // 超时重传
+#define WINDOW_SIZE 16  // 滑动窗口大小
 using namespace std;
 SOCKADDR_IN socketAddr;  // 服务器地址
 SOCKET socketClient;  // 客户端套接字
@@ -24,9 +27,13 @@ int packetNum;  // 发送数据包的数量
 int fileSize;  // 文件大小
 int sendSeq;  // 发送数据包序列号
 int err;  // socket错误提示
-char* filePath;
-char* fileName;
-char* fileBuffer;
+unsigned int sendBase;  // 窗口基序号，指向已发送还未被确认的最小分组序号
+unsigned int nextSeqNum;  // 指向下一个可用但还未发送的分组序号
+int timerID[WINDOW_SIZE];//
+char* filePath;  // 文件(绝对)路径
+char* fileName;  // 文件名
+char* fileBuffer;  
+char** selectiveRepeatBuffer;  // 选择重传缓冲区
 
 void printTime() {
 	// 获取当前系统时间点
@@ -41,27 +48,34 @@ void printTime() {
 		<< std::put_time(&tmInfo, "%Y-%m-%d %H:%M:%S ]") << std::endl;
 }
 
-void printRcvPktMsg(Packet* pkt) {
-	cout << "[Receive Packet's information]:" << endl;
-	cout << "Packet Information:" << endl;
-	cout << "  Size: " << pkt->len << " Bytes" << endl;
-	cout << "  FLAG: " << pkt->FLAG << endl;
-	cout << "  Sequence Number: " << pkt->seq << endl;
-	cout << "  Acknowledgment Number: " << pkt->ack << endl;
-	cout << "  Checksum: " << pkt->checksum << endl;
-	cout << "  Window Length: " << pkt->window << endl;
+// Function to print packet information with color
+void printPacketInfo(Packet* pkt, const char* packetType) {
+	cout << "[" << packetType << "'s info]: ";
+	cout << "Size: " << pkt->len << " Bytes, ";
+	cout << "FLAG: ";
+
+	if (pkt->FLAG & 0x1) cout << BLUE << "FIN" << RESET << ", ";
+	if (pkt->FLAG & 0x2) cout << GREEN << "SYN" << RESET << ", ";
+	if (pkt->FLAG & 0x4) cout << "RST, ";
+	if (pkt->FLAG & 0x8) cout << BLUE << "HEAD" << RESET << ", ";
+
+	cout << GREEN << "Seq: " << pkt->seq << RESET << ", ";
+	cout << BLUE << "Ack: " << pkt->ack << RESET << ", ";
+	cout << "Checksum: " << pkt->checksum << ", ";
+	cout << "Window Length: " << pkt->window << " ";
 	cout << "--------------------------------------" << endl;
 }
+
+void printRcvPktMsg(Packet* pkt) {
+	printPacketInfo(pkt, "Receive Packet");
+}
+
 void printSndPktMsg(Packet* pkt) {
-	cout << "[Send Packet's information]:" << endl;
-	cout << "Packet Information:" << endl;
-	cout << "  Size: " << pkt->len << " Bytes" << endl;
-	cout << "  FLAG: " << pkt->FLAG << endl;
-	cout << "  Sequence Number: " << pkt->seq << endl;
-	cout << "  Acknowledgment Number: " << pkt->ack << endl;
-	cout << "  Checksum: " << pkt->checksum << endl;
-	cout << "  Window Length: " << pkt->window << endl;
-	cout << "--------------------------------------" << endl;
+	printPacketInfo(pkt, "Send Packet");
+}
+void printWindow() {
+	cout << "  当前发送窗口: [" << sendBase << ", " << sendBase + WINDOW_SIZE - 1 << "]";
+	cout << endl;
 }
 
 void initSocket() {
@@ -204,41 +218,69 @@ void disconnect() {
 		}
 	}
 }
-//发送单个包的函数
-void sendPacket(Packet* sendPkt) {
-	Packet* recvPkt = new Packet;
 
-	// 检查一下文件的各个内容
-	printSndPktMsg(sendPkt);
+void sendPacket(Packet* sendPkt) 
+{  
+	cout << "发送第 " << sendPkt->seq << " 号数据包";
+	printWindow();
+	printSndPktMsg(sendPkt);  
+	cout << endl;
 	err = sendto(socketClient, (char*)sendPkt, BUFFER_SIZE, 0, (SOCKADDR*)&socketAddr, sizeof(SOCKADDR));
 	if (err == SOCKET_ERROR) {
-		cout << "sendto failed with error: " << WSAGetLastError() << endl;
+		cout << "Send Packet failed with ERROR: " << WSAGetLastError() << endl;
 	}
-	clock_t start = clock();  // 记录发送时间，超时重传
+}
 
-	// 等待接收ACK信息，验证acknowledge number
-	while (true) {
-		while (recvfrom(socketClient, (char*)recvPkt, BUFFER_SIZE, 0, (SOCKADDR*)&(socketAddr), &len) <= 0)//接收出错 
+void resendPacket(HWND hwnd, UINT uMsg, UINT idEvent, DWORD dwTime) 
+{   // 重传函数
+	// cout << endl << "resend" << " Timer ID " << idEvent << endl << endl;
+	unsigned int seq = 0;
+	for (int i = 0; i < WINDOW_SIZE; i++) 
+	{  // 找到是哪个Timer超时了
+		if (timerID[i] == idEvent && timerID[i] != 0) 
 		{
-			if (clock() - start > MAX_TIME) {
-				printTime();
-				cout << "TIME OUT! Resend this data packet" << endl;
-				//超时重传
-				err = sendto(socketClient, (char*)sendPkt, BUFFER_SIZE, 0, (SOCKADDR*)&socketAddr, sizeof(SOCKADDR));
-				if (err == SOCKET_ERROR) {
-					cout << "sendto failed with error: " << WSAGetLastError() << endl;
-				}
-				start = clock(); // 重设开始时间
-			}
-		}
-
-		// 满足flag中ack=1且ack=seq则视为发送成功
-		if ((recvPkt->FLAG & 0x4) && (recvPkt->ack == sendPkt->seq)) {
-			sendSeq++;
+			seq = i + sendBase;
 			break;
 		}
 	}
+	cout << "No." << seq << " 数据包对应的计时器超时，重新发送" << endl;
 
+	Packet* resendPkt = new Packet;
+	memcpy(resendPkt, selectiveRepeatBuffer[seq - sendBase], sizeof(Packet));  // 从缓冲区直接取出来
+	sendPacket(resendPkt);
+	printSndPktMsg(resendPkt);
+	cout << endl;
+	
+}
+
+void ackHandler(unsigned int ack) 
+{   
+	// cout << endl << "ack " << ack << endl << endl;
+	if (ack >= sendBase && ack < sendBase + WINDOW_SIZE) // 如果ack在窗口内
+	{  
+		KillTimer(NULL, timerID[ack - sendBase]);//取消对应的定时器
+		timerID[ack - sendBase] = 0;  // timerID置零
+
+		if (ack == sendBase) 
+		{   // 如果 ack = sendBase，那么sendBase移动到具有最小序号的未确认分组处
+			for (int i = 0; i < WINDOW_SIZE; i++) 
+			{
+				if (timerID[i]) break;  // 遇到有计时器的停下来
+				sendBase++;  // sendBase后移
+			}
+			int offset = sendBase - ack;
+			for (int i = 0; i < WINDOW_SIZE - offset; i++) 
+			{
+				//统一进行平移操作
+				timerID[i] = timerID[i + offset];  
+				timerID[i + offset] = 0;
+				memcpy(selectiveRepeatBuffer[i], selectiveRepeatBuffer[i + offset], sizeof(Packet));  
+			}
+			for (int i = WINDOW_SIZE - offset; i < WINDOW_SIZE; i++) {
+				timerID[i] = 0;  // 清除多余的计时器
+			}
+		}
+	}
 }
 
 void readFile() {
@@ -266,37 +308,63 @@ void readFile() {
 	f.close();  // 关闭文件
 }
 
-void sendFile() {
-	sendSeq = 0;
+void sendFile() 
+{
+	sendBase = 0;//窗口基序号为0
+	nextSeqNum = 0;//下一个可用但还未发送的分组序号
+	selectiveRepeatBuffer = new char* [WINDOW_SIZE];
+	for (int i = 0; i < WINDOW_SIZE; i++)selectiveRepeatBuffer[i] = new char[sizeof(Packet)];  // 选择重传缓冲区初始化
 	clock_t start = clock();
 
-	// 创建一个记录文件名的数据包（HEAD标志位为1）表示开始文件传输
+	// 发送记录文件信息的HEAD数据包
 	Packet* headPkt = new Packet;
 	printTime();
 	cout << "发送文件头数据包..." << endl;
-	headPkt->setHEAD(sendSeq, fileSize, fileName);
+	headPkt->setHEAD(0, fileSize, fileName);
 	headPkt->checksum = checksum((uint32_t*)headPkt);
-	sendPacket(headPkt);
+	sendPacket(headPkt); 
 
 	// 开始发送装载文件的数据包
 	printTime();
 	cout << "开始发送文件数据包..." << endl;
 	Packet* sendPkt = new Packet;
-	for (int i = 0; i < packetNum; i++) {
-		
-		if (i == packetNum - 1) // 最后一个包
-		{  
-			sendPkt->fillData(sendSeq, fileSize - i * PACKET_LENGTH, fileBuffer + i * PACKET_LENGTH);
-			sendPkt->checksum = checksum((uint32_t*)sendPkt);
+	Packet* recvPkt = new Packet;
+	while (sendBase < packetNum) 
+	{
+		while (nextSeqNum < sendBase + WINDOW_SIZE && nextSeqNum < packetNum) 
+		{  //还在窗口内持续发送数据包
+			if (nextSeqNum == packetNum - 1) 
+			{  // 如果是最后一个包，处理包的大小
+				sendPkt->fillData(nextSeqNum, fileSize - nextSeqNum * PACKET_LENGTH, fileBuffer + nextSeqNum * PACKET_LENGTH);
+				sendPkt->checksum = checksum((uint32_t*)sendPkt);
+			}
+			else 
+			{  
+				sendPkt->fillData(nextSeqNum, PACKET_LENGTH, fileBuffer + nextSeqNum * PACKET_LENGTH);
+				sendPkt->checksum = checksum((uint32_t*)sendPkt);
+			}
+			memcpy(selectiveRepeatBuffer[nextSeqNum - sendBase], sendPkt, sizeof(Packet));  // 已经发送的包存入缓冲区
+			sendPacket(sendPkt);
+			timerID[nextSeqNum - sendBase] = SetTimer(NULL, 0, TIME_OUT, (TIMERPROC)resendPacket);  
+			// 用于监控当前发送的数据包是否在规定时间内得到了确认，没有则触发resendPacket
+			nextSeqNum++;
+			Sleep(10);
 		}
-		else {
-			
-			sendPkt->fillData(sendSeq, PACKET_LENGTH, fileBuffer + i * PACKET_LENGTH);
-			sendPkt->checksum = checksum((uint32_t*)sendPkt);
+
+		// 当前发送窗口已经用完则进入接收ACK阶段
+		err = recvfrom(socketClient, (char*)recvPkt, BUFFER_SIZE, 0, (SOCKADDR*)&(socketAddr), &len);
+		if (err > 0) 
+		{
+			printRcvPktMsg(recvPkt);
+			ackHandler(recvPkt->ack);  // 处理ack
 		}
-		
-		sendPacket(sendPkt);
-		Sleep(5);//设置延时
+		MSG msg;
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) 
+		{  // 以查看的方式从系统中获取消息，可以不将消息从系统中移除，是非阻塞函数；当系统无消息时，返回FALSE，继续执行后续代码。
+			if (msg.message == WM_TIMER) {  // 定时器消息
+				DispatchMessage(&msg);
+			}
+		}
 	}
 
 	clock_t end = clock();
@@ -305,6 +373,7 @@ void sendFile() {
 	cout << "吞吐率为：" << ((float)fileSize) / ((end - start) / CLOCKS_PER_SEC) << " Bytes/s " << endl << endl;
 	cout << endl << "**************************************************************************************************" << endl << endl;
 }
+
 
 int main() {
 	// 初始化客户端

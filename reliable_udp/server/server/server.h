@@ -14,7 +14,7 @@ public:
 public:
 	Packet() : FLAG(0), seq(0), ack(0), len(0), checksum(0), window(0) { memset(data, 0, sizeof(data)); };
 	Packet(uint32_t FLAG, uint32_t seq, uint32_t ack, uint32_t len, uint32_t checksum, uint32_t window);
-	void setACK();
+	void setACK(unsigned int ack);
 	void setSYN();
 	void setSYNACK();
 	void setFIN();
@@ -34,9 +34,10 @@ Packet::Packet(uint32_t FLAG, uint32_t seq, uint32_t ack, uint32_t len, uint32_t
 	memset(this->data, 0, sizeof(this->data));
 }
 
-void Packet::setACK() {
+void Packet::setACK(unsigned int ack) {
 	// ÉèÖÃACKÎ»Îª1
-	this->FLAG = 0x4;  
+	this->FLAG = 0x4;  // FLAG -> 00000100
+	this->ack = ack;
 }
 
 void Packet::setSYN() {

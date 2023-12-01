@@ -1,1 +1,3 @@
-﻿  server.vcxproj -> E:\vscode\Net_Course_hwk\reliable_udp\server\x64\Debug\server.exe
+﻿  Server.cpp
+E:\vscode\Net_Course_hwk\reliable_udp\server\server\Server.cpp(328,21): warning C4018: “<”: 有符号/无符号不匹配
+  server.vcxproj -> E:\vscode\Net_Course_hwk\reliable_udp\server\x64\Debug\server.exe

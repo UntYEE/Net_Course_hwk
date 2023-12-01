@@ -1,7 +1,11 @@
 ﻿  client.cpp
-E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(253,20): warning C4244: “=”: 从“std::streamoff”转换到“int”，可能丢失数据
+E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(295,20): warning C4244: “=”: 从“std::streamoff”转换到“int”，可能丢失数据
+E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(332,18): warning C4018: “<”: 有符号/无符号不匹配
+E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(334,60): warning C4018: “<”: 有符号/无符号不匹配
+E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(348,55): warning C4244: “参数”: 从“double”转换到“UINT”，可能丢失数据
+E:\vscode\Net_Course_hwk\reliable_udp\client\client\client.cpp(348,45): warning C4244: “=”: 从“UINT_PTR”转换到“int”，可能丢失数据
   正在生成代码
   Previous IPDB not found, fall back to full compilation.
-  All 216 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  All 223 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
   已完成代码的生成
   client.vcxproj -> E:\vscode\Net_Course_hwk\reliable_udp\client\x64\Release\client.exe
